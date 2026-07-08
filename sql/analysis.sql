@@ -10,7 +10,7 @@ Plan based on EDA findings:
 */
 WITH aerial_oec AS (
     SELECT 
-        SUM(oec) AS total_aerial_oec,
+        SUM(oec) AS total_aerial_oec, -- Getting total sum of oec for aerial assets by market
         market_id
     FROM asset_oec
     WHERE equipment_class = 'Aerial' AND market_id IN (SELECT market_id FROM market_mapping)
@@ -18,7 +18,7 @@ WITH aerial_oec AS (
 ),
 total_oec_by_market AS (
     SELECT
-        SUM(oec) AS total_oec,
+        SUM(oec) AS total_oec, -- Getting total sum of oec by market so that I can calculate asset mix
         market_id
     FROM asset_oec
     WHERE market_id IN (SELECT market_id FROM market_mapping)
@@ -27,7 +27,7 @@ total_oec_by_market AS (
 current_asset_mix AS (
     SELECT 
         (e.total_aerial_oec / a.total_oec) AS aerial_mix, 
-        a.market_id
+        a.market_id -- Calculating asset mix by dividing aerial oec sum over total oec sum for each market
     FROM aerial_oec e
     JOIN total_oec_by_market a 
     ON e.market_id = a.market_id
@@ -36,18 +36,18 @@ asset_scope AS (
     SELECT
         a.asset_id,
         GREATEST(DATE '2017-01-01', a.acquisition_date, m.market_open_date) AS in_scope_date,
-        a.market_id,
-        a.oec,
+        a.market_id, -- Considering assets to be in scope only once the market has opened, the asset has been acquired, and 2017 has began
+        a.oec, -- I will use this later to properly annualize revenue on a per asset basis
         a.equipment_class
     FROM asset_oec a
     JOIN market_mapping m ON a.market_id = m.market_id
 ),
 in_scope_annualized_rental_revenue_by_asset AS (
     SELECT
-        COALESCE(SUM(r.rental_revenue), 0) AS revenue_sum, -- 0 for rev sum if not in rentals
+        COALESCE(SUM(r.rental_revenue), 0) AS revenue_sum, -- 0 for revenue sum if not in rentals
         (365.0 / DATEDIFF('day', a.in_scope_date, '2018-01-01')) * COALESCE(SUM(r.rental_revenue), 0) AS revenue_sum_annualized,
-        a.asset_id,
-        a.market_id,
+        a.asset_id, -- Annualizing revenue based on the in_scope_date
+        a.market_id, -- Does not account for seasonality, maybe worth adding in future analysis
         a.oec,
         a.equipment_class
     FROM asset_scope a
@@ -60,7 +60,7 @@ market_summary_dirt AS (
     SELECT 
         m.market_id, 
         m.market_name, 
-        SUM(r.revenue_sum_annualized) AS dirt_ann_rev,
+        SUM(r.revenue_sum_annualized) AS dirt_ann_rev, -- Calculating financial utilization and other metrics for dirt
         SUM(r.oec) AS dirt_oec_sum,
         SUM(r.revenue_sum_annualized) / SUM(r.oec) AS dirt_fin_util
     FROM market_mapping m 
@@ -72,7 +72,7 @@ market_summary_dirt AS (
 market_summary_aerial AS (
     SELECT 
         m.market_id, 
-        m.market_name, 
+        m.market_name, -- Calculating financial utilization and other metrics for aerial
         SUM(r.revenue_sum_annualized) AS aerial_ann_rev,
         SUM(r.oec) AS aerial_oec_sum,
         SUM(r.revenue_sum_annualized) / SUM(r.oec) AS aerial_fin_util
@@ -84,7 +84,7 @@ market_summary_aerial AS (
 ),
 sample_size AS (
     SELECT
-        market_id,
+        market_id, -- Calculating binding sample size using the equipment class, for each market, with the smaller number of assets
         LEAST(
             COUNT(*) FILTER (WHERE equipment_class = 'Aerial'),
             COUNT(*) FILTER (WHERE equipment_class = 'Dirt')
@@ -105,7 +105,7 @@ market_summary AS (
         ROUND(a.aerial_fin_util - d.dirt_fin_util, 2) AS aerial_fu_diff,
         s.binding_sample_size AS sample_size
     FROM current_asset_mix c
-    JOIN market_summary_dirt d
+    JOIN market_summary_dirt d -- Creating the final market summary with the financial utilizations by market and equipment class and sample size
     ON c.market_id = d.market_id
     JOIN market_summary_aerial a
     ON c.market_id = a.market_id
